@@ -1,0 +1,23 @@
+<article>
+	<section>
+		<ul class="text-x-small">
+	    {% for task in tasks %}
+	    	<li>
+		    	{% if task.status == "completed" %}
+		      	<strike>
+		      	{% endif %}
+		    <img src = "https://glassgtasks.appspot.com/static/images/bullet.png" class="icon-small">
+		  	{{ task.title }}
+		  		{% if task.status == "completed" %}
+		  		</strike>
+		  		{% endif %}
+		  	</li>
+	     {% endfor %}
+	    </ul>
+  	</section>
+	<footer>
+		<p><img src = "https://glassgtasks.appspot.com/static/images/tasks_icon.png" class="left">
+		{{list_title}}</p>
+	</footer>
+</article>
+

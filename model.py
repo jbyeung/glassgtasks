@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 """Datastore models for Starter Project"""
 
 __author__ = 'alainv@google.com (Alain Vongsouvanh)'
@@ -21,6 +22,14 @@ from google.appengine.ext import db
 
 from oauth2client.appengine import CredentialsProperty
 
+class TasklistStore(db.Model):
+  owner = db.StringProperty(required=True)
+  my_name = db.StringProperty()
+  my_id = db.StringProperty()
+
+  @staticmethod
+  def tasklist_key(username):
+  	return db.Key("TasklistStore", username)
 
 class Credentials(db.Model):
   """Datastore entity for storing OAuth2.0 credentials.

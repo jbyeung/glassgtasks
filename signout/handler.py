@@ -19,9 +19,12 @@ __author__ = 'alainv@google.com (Alain Vongsouvanh)'
 
 import webapp2
 
+
+from google.appengine.ext import db
 from google.appengine.api import urlfetch
 
 from model import Credentials
+from model import TasklistStore
 import util
 
 
@@ -36,9 +39,18 @@ class SignoutHandler(webapp2.RequestHandler):
     """Delete the user's credentials from the datastore."""
     urlfetch.fetch(OAUTH2_REVOKE_ENDPOINT % self.credentials.refresh_token)
     util.store_userid(self, '')
+
+    #clear datastore object for tasklists
+    q = TasklistStore.all()
+    q.filter("owner = ",self.userid)
+
+    for p in q.run():
+      p.delete()
+
     credentials_entity = Credentials.get_by_key_name(self.userid)
     if credentials_entity:
       credentials_entity.delete()
+      
     self.redirect('/')
 
 

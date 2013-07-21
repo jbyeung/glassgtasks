@@ -8,24 +8,33 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# WITHOUT WARRANTIES OR CsecreONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
 """Request Handler for /notify endpoint."""
 
-__author__ = 'alainv@google.com (Alain Vongsouvanh)'
+# need to configure the methods to handle menu actions from oauth for tasks
+# leave at marking complete only, no uncompleting
+# also voice command to make new task
+
+
+__author__ = 'jbyeung@gmail.com (Jeff Yeung)'
 
 
 import io
 import json
 import logging
 import webapp2
+import custom_item_fields
 
 from apiclient.http import MediaIoBaseUpload
+from apiclient import errors
 from oauth2client.appengine import StorageByKeyName
+from main_handler import TIMELINE_ITEM_TEMPLATE_URL
 
 from model import Credentials
+from model import TasklistStore
 import util
 
 
@@ -41,58 +50,145 @@ class NotifyHandler(webapp2.RequestHandler):
     self.mirror_service = util.create_service(
         'mirror', 'v1',
         StorageByKeyName(Credentials, userid, 'credentials').get())
-    if data.get('collection') == 'locations':
-      self._handle_locations_notification(data)
-    elif data.get('collection') == 'timeline':
+    self.tasks_service = util.create_service(
+        'tasks', 'v1', 
+        StorageByKeyName(Credentials, userid, 'credentials').get())
+    if data.get('collection') == 'timeline':
       self._handle_timeline_notification(data)
 
-  def _handle_locations_notification(self, data):
-    """Handle locations notification."""
-    location = self.mirror_service.locations().get(id=data['itemId']).execute()
-    text = 'New location is %s, %s' % (location.get('latitude'),
-                                       location.get('longitude'))
-    body = {
-        'text': text,
-        'location': location,
-        'menuItems': [{'action': 'NAVIGATE'}],
-        'notification': {'level': 'DEFAULT'}
-    }
-    self.mirror_service.timeline().insert(body=body).execute()
 
   def _handle_timeline_notification(self, data):
     """Handle timeline notification."""
-    for user_action in data.get('userActions', []):
-      if user_action.get('type') == 'SHARE':
-        # Fetch the timeline item.
-        item = self.mirror_service.timeline().get(id=data['itemId']).execute()
-        attachments = item.get('attachments', [])
-        media = None
-        if attachments:
-          # Get the first attachment on that timeline item and do stuff with it.
-          attachment = self.mirror_service.timeline().attachments().get(
-              itemId=data['itemId'],
-              attachmentId=attachments[0]['id']).execute()
-          resp, content = self.mirror_service._http.request(
-              attachment['contentUrl'])
-          if resp.status == 200:
-            media = MediaIoBaseUpload(
-                io.BytesIO(content), attachment['contentType'],
-                resumable=True)
-          else:
-            logging.info('Unable to retrieve attachment: %s', resp.status)
-        body = {
-            'text': 'Echoing your shared item: %s' % item.get('text', ''),
-            'notification': {'level': 'DEFAULT'}
-        }
-        self.mirror_service.timeline().insert(
-            body=body, media_body=media).execute()
-        # Only handle the first successful action.
-        break
-      else:
-        logging.info(
-            "I don't know what to do with this notification: %s", user_action)
+    #userid, creds = util.load_session_credentials(self)
+    item_id = data.get('itemId')
+    userid = data.get('userToken')
 
+    #process actions
+    logging.info(userid)
+    #for user_action in data.get('userActions', []):
+    user_action = data.get('userActions', [])[0]
+    logging.info(user_action)
+    payload = user_action.get('payload')
+
+    if user_action.get('type') == 'REPLY':
+        # handle adding a new task via voice input
+        # create local vars for selected tasklist
+        
+        transcription_item = self.mirror_service.timeline().get(id=item_id).execute()
+        transcription = transcription_item.get('text')
+
+        timeline_item_id = transcription_item.get('inReplyTo')
+        item = self.mirror_service.timeline().get(id=timeline_item_id).execute()
+        tasklist_id = item.get('title')     #this is actually the tasklist id stashed in _new_tasklist from main_handler
+        logging.info(tasklist_id)
+        logging.info("tasklist id above")
+        
+        q = TasklistStore.all()
+        q.filter("owner = ",userid)
+        q.filter("my_id = ",tasklist_id)
+        q.run()
+        for p in q:
+            tasklist_name = p.my_name
+        
+
+        if transcription:   #don't do anything if its empty
+            task = {
+                'title':transcription
+            }
+            logging.info('transcribed this text: ')
+            logging.info(transcription)
+            
+            try:
+                self.mirror_service.timeline().delete(id=item_id).execute()
+                logging.info('deleted the voice item')
+            except errors.HttpError, e:
+                logging.info('An error occurred: %s' % error)
+
+            try:
+                result = self.tasks_service.tasks().insert(tasklist=tasklist_id, body=task).execute()
+                logging.info('new task is inserted now')
+            except errors.HttpError, error:
+                logging.info('An error occured: %s' % error)
+
+        item_id = timeline_item_id
+    ############# CODE FOR REFRESH
+    # refresh the card on the timeline on refresh command or after any custom action
+
+    if user_action.get('type') == 'REPLY' or (user_action.get('type') == 'CUSTOM' and payload == 'refresh'):
+        # create local vars for selected tasklist
+        item = self.mirror_service.timeline().get(id=item_id).execute()
+        tasklist_id = item.get('title')     #this is actually the tasklist id stashed in _new_tasklist from main_handler
+        is_pinned = item.get('isPinned')
+        logging.info(tasklist_id)
+        logging.info("tasklist_id above")
+        
+        q = TasklistStore.all()
+        q.filter("owner = ",userid)
+        q.filter("my_id = ",tasklist_id)
+        q.run()
+        for p in q:
+            tasklist_name = p.my_name
+        
+        # pull new text from tasks api - currently refresh on every action
+        logging.info('refreshing')
+        result = self.tasks_service.tasks().list(tasklist=tasklist_id).execute()
+
+        tasks = []
+        for task in result['items']:
+            if task['status'] != 'completed':
+                tasks.append(task)
+
+        indx = 5 if len(tasks) > 4 else len(tasks)
+        tasks = tasks[0:indx]
+
+        if len(tasks) == 0:
+            tasks.append({'title': 'No tasks!'})        
+
+        #render html
+        new_fields = {
+            'list_title': tasklist_name,
+            'tasks': tasks    
+        }
+        
+        body = {
+            'notification': {'level': 'DEFAULT'},
+            'title': tasklist_id,
+            'isPinned': is_pinned,
+            # 'html': timeline_html,
+            'menuItems': [
+                {
+                    'action': 'REPLY',
+                    'id': 'create_task',
+                    'values': [{
+                        'displayName': 'New Task',
+                        'iconUrl': util.get_full_url(self, '/static/images/new_task.png')}]
+                },
+                {
+                    'action': 'CUSTOM',
+                    'id': 'refresh',
+                    'values': [{
+                        'displayName': 'Refresh',
+                        'iconUrl': util.get_full_url(self, '/static/images/refresh2.png')}]
+                },
+                {'action': 'SHARE'},
+                {'action': 'TOGGLE_PINNED'},
+                {'action': 'DELETE'}
+            ]
+        }
+
+        custom_item_fields.set_multiple(body, new_fields, TIMELINE_ITEM_TEMPLATE_URL)
+
+        try:
+            # First retrieve the timeline item from the API.
+            # Update the timeline item's metadata.
+            #patched_timeline_item = {'text': newtext }
+            result = self.mirror_service.timeline().update(id=item_id, body=body).execute()
+            #result = self.mirror_service.timeline().update(id=item_id, body=timeline_item).execute()
+            logging.info('inserted updated tasklist to timeline')
+        except errors.HttpError, error:
+            logging.info('An error occured: %s ', error)
 
 NOTIFY_ROUTES = [
     ('/notify', NotifyHandler)
 ]
+

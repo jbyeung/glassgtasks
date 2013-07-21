@@ -14,30 +14,42 @@
 
 """Request Handler for /main endpoint."""
 
-__author__ = 'alainv@google.com (Alain Vongsouvanh)'
+__author__ = 'jbyeung@gmail.com (Jeff Yeung)'
 
 
 import io
 import jinja2
 import logging
+import json
 import os
 import webapp2
+import time, threading
 
 from google.appengine.api import memcache
 from google.appengine.api import urlfetch
+from google.appengine.ext import db
 
+import custom_item_fields
 import httplib2
 from apiclient import errors
 from apiclient.http import MediaIoBaseUpload
 from apiclient.http import BatchHttpRequest
 from oauth2client.appengine import StorageByKeyName
 
-from model import Credentials
-import util
+from apiclient.discovery import build
+from oauth2client.appengine import OAuth2Decorator
 
+
+from model import Credentials
+from model import TasklistStore
+import util
 
 jinja_environment = jinja2.Environment(
     loader=jinja2.FileSystemLoader(os.path.dirname(__file__)))
+
+# TASKLIST_IDS = {}
+# TASKLIST_NAMES = []
+TIMELINE_ITEM_TEMPLATE_URL = '/templates/card.html'
 
 
 class _BatchCallback(object):
@@ -67,26 +79,38 @@ class MainHandler(webapp2.RequestHandler):
 
   def _render_template(self, message=None):
     """Render the main page template."""
+
+    userid, creds = util.load_session_credentials(self)
+    tasks_service = util.create_service('tasks', 'v1', creds)
+
     template_values = {'userId': self.userid}
+
     if message:
       template_values['message'] = message
-    # self.mirror_service is initialized in util.auth_required.
-    try:
-      template_values['contact'] = self.mirror_service.contacts().get(
-        id='Python Quick Start').execute()
-    except errors.HttpError:
-      logging.info('Unable to find Python Quick Start contact.')
-
-    timeline_items = self.mirror_service.timeline().list(maxResults=3).execute()
-    template_values['timelineItems'] = timeline_items.get('items', [])
-
+    
+    # self.mirror_service is initialized in util.auth_required
     subscriptions = self.mirror_service.subscriptions().list().execute()
     for subscription in subscriptions.get('items', []):
       collection = subscription.get('collection')
       if collection == 'timeline':
         template_values['timelineSubscriptionExists'] = True
-      elif collection == 'locations':
-        template_values['locationSubscriptionExists'] = True
+    
+    # pull from tasks api, list of tasklists
+    tasklists = tasks_service.tasklists().list().execute()
+    template_values['tasklists'] = tasklists['items']
+
+    #load the tasklist names and ids from db if exists
+    #q = db.GqlQuery("SELECT * FROM TasklistStore " + 
+    #                "WHERE owner = " + userid)
+    q = TasklistStore.all()
+    q.filter("owner = ",self.userid)
+    TASKLIST_NAMES = []
+    for p in q.run():
+      TASKLIST_NAMES.append(p.my_name)
+    if TASKLIST_NAMES == []:
+      TASKLIST_NAMES.append("None")
+
+    template_values['synced'] = TASKLIST_NAMES
 
     template = jinja_environment.get_template('templates/index.html')
     self.response.out.write(template.render(template_values))
@@ -105,13 +129,9 @@ class MainHandler(webapp2.RequestHandler):
     operation = self.request.get('operation')
     # Dict of operations to easily map keys to methods.
     operations = {
-        'insertSubscription': self._insert_subscription,
-        'deleteSubscription': self._delete_subscription,
-        'insertItem': self._insert_item,
-        'insertItemWithAction': self._insert_item_with_action,
-        'insertItemAllUsers': self._insert_item_all_users,
-        'insertContact': self._insert_contact,
-        'deleteContact': self._delete_contact
+        # 'refresh': self._refresh_list,
+        'new_tasklist': self._new_tasklist,
+        'select_tasklist': self._select_tasklist
     }
     if operation in operations:
       message = operations[operation]()
@@ -121,118 +141,127 @@ class MainHandler(webapp2.RequestHandler):
     memcache.set(key=self.userid, value=message, time=5)
     self.redirect('/')
 
-  def _insert_subscription(self):
-    """Subscribe the app."""
-    # self.userid is initialized in util.auth_required.
-    body = {
-        'collection': self.request.get('collection', 'timeline'),
-        'userToken': self.userid,
-        'callbackUrl': util.get_full_url(self, '/notify')
-    }
-    # self.mirror_service is initialized in util.auth_required.
-    self.mirror_service.subscriptions().insert(body=body).execute()
-    return 'Application is now subscribed to updates.'
+  def _select_tasklist(self):
+    # selects tasklist, assigns to TASKLIST_NAME
+    userid, creds = util.load_session_credentials(self)
+    tasks_service = util.create_service('tasks', 'v1', creds)
 
-  def _delete_subscription(self):
-    """Unsubscribe from notifications."""
-    collection = self.request.get('subscriptionId')
-    self.mirror_service.subscriptions().delete(id=collection).execute()
-    return 'Application has been unsubscribed.'
+    tasklist_id = self.request.get('select')
+    logging.info("select")
+    logging.info(self.request.get('select'))
 
-  def _insert_item(self):
-    """Insert a timeline item."""
-    logging.info('Inserting timeline item')
-    body = {
-        'notification': {'level': 'DEFAULT'}
-    }
-    if self.request.get('html') == 'on':
-      body['html'] = [self.request.get('message')]
+    if tasklist_id == '':
+      return "Please select a tasklist before trying to add it."
     else:
-      body['text'] = self.request.get('message')
+      #set name/id to db
+      my_tasklist = TasklistStore(owner=self.userid)
+      my_tasklist.my_id = tasklist_id
+      #TASKLIST_NAMES.append(tasklist_title)
 
-    media_link = self.request.get('imageUrl')
-    if media_link:
-      if media_link.startswith('/'):
-        media_link = util.get_full_url(self, media_link)
-      resp = urlfetch.fetch(media_link, deadline=20)
-      media = MediaIoBaseUpload(
-          io.BytesIO(resp.content), mimetype='image/jpeg', resumable=True)
+      tasklists = tasks_service.tasklists().list().execute()
+      for tasklist in tasklists['items']:
+        if tasklist_id == tasklist['id']:
+          my_tasklist.my_name = tasklist['title']
+            #TASKLIST_IDS[tasklist_title] = tasklist['id']
+
+      my_tasklist.put()
+
+      return my_tasklist.my_name + " selected successfully"
+
+  def _new_tasklist(self):
+    userid, creds = util.load_session_credentials(self)
+    tasks_service = util.create_service('tasks', 'v1', creds)
+
+    logging.info('Inserting timeline items')
+    # Note that icons will not show up when making counters on a
+    # locally hosted web interface.
+    #mirror_service = util.create_service('mirror', 'v1', creds)
+    #tasks_service = util.create_service('tasks', 'v1', creds)
+
+
+    ############################  TASKS API STUFF #######
+    # create empty task list @glass if none selected or none exist
+    #q = db.GqlQuery("SELECT * FROM TasklistStore " + 
+    #                "WHERE owner = " + userid)
+    q = TasklistStore.all()
+    q.filter("owner = ",self.userid)
+    q.run()
+    #if no tasklists, insert a default one
+    if q:
+        logging.info('not inserting')
     else:
-      media = None
+        logging.info('no tasklist selected, inserting @glass ')
+        tasklist = {
+          'title': '@glass'
+        }
+        result = tasks_service.tasklists().insert(body=tasklist).execute()
+        my_tasklist = TasklistStore(owner = userid, my_name = tasklist_title,
+                                    my_id = result['id'])
+        my_tasklist.put()
+        
+    ## now for each selected tasklist, post tasks to timeline
+    for p in q:
+      tasklist_id = p.my_id
+      tasklist_name = p.my_name
 
-    # self.mirror_service is initialized in util.auth_required.
-    self.mirror_service.timeline().insert(body=body, media_body=media).execute()
-    return  'A timeline item has been inserted.'
-
-  def _insert_item_with_action(self):
-    """Insert a timeline item user can reply to."""
-    logging.info('Inserting timeline item')
-    body = {
-        'creator': {
-            'displayName': 'Python Starter Project',
-            'id': 'PYTHON_STARTER_PROJECT'
-        },
-        'text': 'Tell me what you had for lunch :)',
-        'notification': {'level': 'DEFAULT'},
-        'menuItems': [{'action': 'REPLY'}]
-    }
-    # self.mirror_service is initialized in util.auth_required.
-    self.mirror_service.timeline().insert(body=body).execute()
-    return 'A timeline item with action has been inserted.'
-
-  def _insert_item_all_users(self):
-    """Insert a timeline item to all authorized users."""
-    logging.info('Inserting timeline item to all users')
-    users = Credentials.all()
-    total_users = users.count()
-
-    if total_users > 10:
-      return 'Total user count is %d. Aborting broadcast to save your quota' % (
-          total_users)
-    body = {
-        'text': 'Hello Everyone!',
-        'notification': {'level': 'DEFAULT'}
-    }
-
-    batch_responses = _BatchCallback()
-    batch = BatchHttpRequest(callback=batch_responses.callback)
-    for user in users:
-      creds = StorageByKeyName(
-          Credentials, user.key().name(), 'credentials').get()
-      mirror_service = util.create_service('mirror', 'v1', creds)
-      batch.add(
-          mirror_service.timeline().insert(body=body),
-          request_id=user.key().name())
-
-    batch.execute(httplib2.Http())
-    return 'Successfully sent cards to %d users (%d failed).' % (
-        batch_responses.success, batch_responses.failure)
-
-  def _insert_contact(self):
-    """Insert a new Contact."""
-    logging.info('Inserting contact')
-    name = self.request.get('name')
-    image_url = self.request.get('imageUrl')
-    if not name or not image_url:
-      return 'Must specify imageUrl and name to insert contact'
-    else:
-      if image_url.startswith('/'):
-        image_url = util.get_full_url(self, image_url)
-      body = {
-          'id': name,
-          'displayName': name,
-          'imageUrls': [image_url]
+      # insert seed tasks
+      task = {
+        'title': 'Glass interface synced to this list!',
+        'notes': 'Try adding a new task with the voice command!'
       }
-      # self.mirror_service is initialized in util.auth_required.
-      self.mirror_service.contacts().insert(body=body).execute()
-      return 'Inserted contact: ' + name
+      result = tasks_service.tasks().insert(tasklist=tasklist_id, body=task).execute()
+      
+      # grab all the tasks in tasklist to display
+      result = tasks_service.tasks().list(tasklist=tasklist_id).execute()
 
-  def _delete_contact(self):
-    """Delete a Contact."""
-    # self.mirror_service is initialized in util.auth_required.
-    self.mirror_service.contacts().delete(
-        id=self.request.get('id')).execute()
-    return 'Contact has been deleted.'
+      #filter out completed tasks
+      tasks = []
+      for i, task in enumerate(result['items']):
+        if task['status'] != 'completed':
+          tasks.append(task)
+
+      indx = 5 if len(tasks) > 4 else len(tasks)
+      tasks = tasks[0:indx]
+
+      if len(tasks) == 0:
+        tasks.append({'title': 'No tasks!'})
+ 
+      #render html
+      new_fields = {
+          'list_title': tasklist_name,
+          'tasks': tasks
+      }
+      body = {
+          'notification': {'level': 'DEFAULT'},
+          'title': tasklist_id,     #secret way of stashing the tasklist id in the timeline item
+          'menuItems': [
+              {
+                  'action': 'REPLY',
+                  'id': 'create_task',
+                  'values': [{
+                      'displayName': 'New Task',
+                      'iconUrl': util.get_full_url(self, '/static/images/new_task.png')}]
+              },
+              {
+                  'action': 'CUSTOM',
+                  'id': 'refresh',
+                  'values': [{
+                      'displayName': 'Refresh',
+                      'iconUrl': util.get_full_url(self, '/static/images/refresh2.png')}]
+              },
+              {'action': 'TOGGLE_PINNED'},
+              {'action': 'DELETE'}
+          ]
+      }
+      custom_item_fields.set_multiple(body, new_fields, TIMELINE_ITEM_TEMPLATE_URL)
+
+      # self.mirror_service is initialized in util.auth_required.
+      # add card to timeline
+      try:
+        result = self.mirror_service.timeline().insert(body=body).execute()
+      except errors.HttpError, error:
+        logging.info ('an error has occured %s ', error)
+    return 'New tasklists have been inserted to the timeline.'  
 
 
 MAIN_ROUTES = [
