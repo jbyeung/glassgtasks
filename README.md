@@ -26,3 +26,6 @@ In regard to the UI for marking tasks as complete: What about bundles? If you pr
 
 
 Thanks for the input, I hadn't thought about adding the main actions into the top bundle-child card.. that might work.  Completing and removing tasks I can see.  Editing - voice input would have to replace the text, basically delete+add (and a sort-by-edit-date to move it to top).  The only other thing I could see is adding a note to the task maybe?  I'll probably add these changes after I figure out an easy way to do auto-refresh, then do it all at once.
+
+
+I think checkboxes on the website to configure things would be a good idea. Configuration is something that shouldn't really be necessary on Glass itself, and wouldn't fit well with Google's idea of keeping the presentation on Glass relatively simple. But there's no question people are going to have different expectations and wants and this would expose it to them well. Since most configuration options should basically be "set once, then leave alone" it's a good way to handle it.
