@@ -37,6 +37,8 @@ from model import Credentials
 from model import TasklistStore
 import util
 
+from tasks import refresh_me
+
 
 class NotifyHandler(webapp2.RequestHandler):
   """Request Handler for notification pings."""
@@ -130,64 +132,67 @@ class NotifyHandler(webapp2.RequestHandler):
             for p in q:
                 tasklist_name = p.my_name
             
+            #refresh
+            refresh_me(self.mirror_service, self.tasks_service, item_id, tasklist_name, tasklist_id)
+
             # pull new text from tasks api - currently refresh on every action
-            logging.info('refreshing')
-            result = self.tasks_service.tasks().list(tasklist=tasklist_id).execute()
+            # logging.info('refreshing')
+            # result = self.tasks_service.tasks().list(tasklist=tasklist_id).execute()
 
-            tasks = []
-            for task in result['items']:
-                if task['status'] != 'completed':
-                    tasks.append(task)
+            # tasks = []
+            # for task in result['items']:
+            #     if task['status'] != 'completed':
+            #         tasks.append(task)
 
-            indx = 5 if len(tasks) > 4 else len(tasks)
-            tasks = tasks[0:indx]
+            # indx = 5 if len(tasks) > 4 else len(tasks)
+            # tasks = tasks[0:indx]
 
-            if len(tasks) == 0:
-                tasks.append({'title': 'No tasks!'})        
+            # if len(tasks) == 0:
+            #     tasks.append({'title': 'No tasks!'})        
 
-            #render html
-            new_fields = {
-                'list_title': tasklist_name,
-                'tasks': tasks    
-            }
+            # #render html
+            # new_fields = {
+            #     'list_title': tasklist_name,
+            #     'tasks': tasks    
+            # }
             
-            body = {
-                'notification': {'level': 'DEFAULT'},
-                'title': tasklist_id,
-                'isPinned': is_pinned,
-                # 'html': timeline_html,
-                'menuItems': [
-                    {
-                        'action': 'REPLY',
-                        'id': 'create_task',
-                        'values': [{
-                            'displayName': 'New Task',
-                            'iconUrl': util.get_full_url(self, '/static/images/new_task.png')}]
-                    },
-                    {
-                        'action': 'CUSTOM',
-                        'id': 'refresh',
-                        'values': [{
-                            'displayName': 'Refresh',
-                            'iconUrl': util.get_full_url(self, '/static/images/refresh2.png')}]
-                    },
-                    {'action': 'SHARE'},
-                    {'action': 'TOGGLE_PINNED'},
-                    {'action': 'DELETE'}
-                ]
-            }
+            # body = {
+            #     'notification': {'level': 'DEFAULT'},
+            #     'title': tasklist_id,
+            #     'isPinned': is_pinned,
+            #     # 'html': timeline_html,
+            #     'menuItems': [
+            #         {
+            #             'action': 'REPLY',
+            #             'id': 'create_task',
+            #             'values': [{
+            #                 'displayName': 'New Task',
+            #                 'iconUrl': util.get_full_url(self, '/static/images/new_task.png')}]
+            #         },
+            #         {
+            #             'action': 'CUSTOM',
+            #             'id': 'refresh',
+            #             'values': [{
+            #                 'displayName': 'Refresh',
+            #                 'iconUrl': util.get_full_url(self, '/static/images/refresh2.png')}]
+            #         },
+            #         {'action': 'SHARE'},
+            #         {'action': 'TOGGLE_PINNED'},
+            #         {'action': 'DELETE'}
+            #     ]
+            # }
 
-            custom_item_fields.set_multiple(body, new_fields, TIMELINE_ITEM_TEMPLATE_URL)
+            # custom_item_fields.set_multiple(body, new_fields, TIMELINE_ITEM_TEMPLATE_URL)
 
-            try:
-                # First retrieve the timeline item from the API.
-                # Update the timeline item's metadata.
-                #patched_timeline_item = {'text': newtext }
-                result = self.mirror_service.timeline().update(id=item_id, body=body).execute()
-                #result = self.mirror_service.timeline().update(id=item_id, body=timeline_item).execute()
-                logging.info('inserted updated tasklist to timeline')
-            except errors.HttpError, error:
-                logging.info('An error occured: %s ', error)
+            # try:
+            #     # First retrieve the timeline item from the API.
+            #     # Update the timeline item's metadata.
+            #     #patched_timeline_item = {'text': newtext }
+            #     result = self.mirror_service.timeline().update(id=item_id, body=body).execute()
+            #     #result = self.mirror_service.timeline().update(id=item_id, body=timeline_item).execute()
+            #     logging.info('inserted updated tasklist to timeline')
+            # except errors.HttpError, error:
+            #     logging.info('An error occured: %s ', error)
 
 NOTIFY_ROUTES = [
     ('/notify', NotifyHandler)

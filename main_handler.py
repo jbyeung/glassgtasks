@@ -29,6 +29,8 @@ from google.appengine.api import memcache
 from google.appengine.api import urlfetch
 from google.appengine.ext import db
 
+from google.appengine.ext import deferred
+
 import custom_item_fields
 import httplib2
 from apiclient import errors
@@ -44,11 +46,12 @@ from model import Credentials
 from model import TasklistStore
 import util
 
+from tasks import auto_refresh, get_html_from_tasks, TIMELINE_ITEM_TEMPLATE_URL
+
+
 jinja_environment = jinja2.Environment(
     loader=jinja2.FileSystemLoader(os.path.dirname(__file__)))
 
-# TASKLIST_IDS = {}
-# TASKLIST_NAMES = []
 TIMELINE_ITEM_TEMPLATE_URL = '/templates/card.html'
 
 
@@ -171,6 +174,7 @@ class MainHandler(webapp2.RequestHandler):
   def _new_tasklist(self):
     userid, creds = util.load_session_credentials(self)
     tasks_service = util.create_service('tasks', 'v1', creds)
+    mirror_service = util.create_service('mirror', 'v1', creds)
 
     logging.info('Inserting timeline items')
     # Note that icons will not show up when making counters on a
@@ -259,8 +263,16 @@ class MainHandler(webapp2.RequestHandler):
       # add card to timeline
       try:
         result = self.mirror_service.timeline().insert(body=body).execute()
+        if result:
+          item_id = result['id']
+          # logging.info('mainhandler about to defer')
+          # deferred.defer(auto_refresh, creds, mirror_service, tasks_service, item_id, tasklist_name, tasklist_id, True)
+          # logging.info('mainhandler deferred')
+
       except errors.HttpError, error:
         logging.info ('an error has occured %s ', error)
+
+
     return 'New tasklists have been inserted to the timeline.'  
 
 

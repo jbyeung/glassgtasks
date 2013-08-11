@@ -10,12 +10,12 @@ can do:
 Google App engine url: glassgtasks.appspot.com
 
 
+Auto-refresh currently doesn't work, so is disabled at the moment.
 
 
-debug:
-clean up code - refresh/adding tasklist should be compacted
-add auto-refresh
 
+to do:
+debug auto-refresh, queues fail to execute
 
 features to add later:
 - change to bundle, with first card as main actions and 5 item list (or expandable), others for descriptions of specific tasks and completion option
