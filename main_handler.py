@@ -224,20 +224,22 @@ class MainHandler(webapp2.RequestHandler):
         if task['status'] != 'completed':
           tasks.append(task)
 
-      indx = 5 if len(tasks) > 4 else len(tasks)
-      tasks = tasks[0:indx]
+      #grabbing all tasks now instead of just 5
+      #indx = 5 if len(tasks) > 4 else len(tasks)
+      #tasks = tasks[0:indx]
 
       if len(tasks) == 0:
         tasks.append({'title': 'No tasks!'})
  
       #render html
-      new_fields = {
-          'list_title': tasklist_name,
-          'tasks': tasks
-      }
+      # new_fields = {
+      #     'list_title': tasklist_name,
+      #     'tasks': tasks
+      # }
       body = {
           'notification': {'level': 'DEFAULT'},
           'title': tasklist_id,     #secret way of stashing the tasklist id in the timeline item
+          'html': get_html_from_tasks(tasks_service, tasklist_id, tasklist_name),
           'menuItems': [
               {
                   'action': 'REPLY',
@@ -257,7 +259,8 @@ class MainHandler(webapp2.RequestHandler):
               {'action': 'DELETE'}
           ]
       }
-      custom_item_fields.set_multiple(body, new_fields, TIMELINE_ITEM_TEMPLATE_URL)
+      # custom_item_fields.set_multiple(body, new_fields, TIMELINE_ITEM_TEMPLATE_URL)
+
 
       # self.mirror_service is initialized in util.auth_required.
       # add card to timeline

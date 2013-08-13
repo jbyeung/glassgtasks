@@ -3,6 +3,7 @@
 import os
 import jinja2
 import logging
+import math
 from apiclient import errors
 
 import time, threading
@@ -76,8 +77,8 @@ def get_html_from_tasks(tasks_service, tasklist_id, tasklist_title):
         if task['status'] != 'completed':
             tasks.append(task)
 
-    indx = 5 if len(tasks) > 4 else len(tasks)
-    tasks = tasks[0:indx]
+    #indx = 5 if len(tasks) > 4 else len(tasks)
+    #tasks = tasks[0:indx]
 
     if len(tasks) == 0:
         tasks.append({'title': 'No tasks!'})        
@@ -85,10 +86,18 @@ def get_html_from_tasks(tasks_service, tasklist_id, tasklist_title):
     #render html
     logging.info('gethtml about to set html')
     template = jinja_environment.get_template(TIMELINE_ITEM_TEMPLATE_URL)
-    template_values['tasks'] = tasks
     template_values['list_title'] = tasklist_title
 
-    tasks_html = template.render(template_values)
+    #paginate html for every 5 tasks
+    tasks_html = ''
+    number_pages = int(math.ceil(float(len(tasks)) // 5.0))
+    counter = 0
+    for i in range(number_pages):
+    	indx = 5 if len(tasks[counter:]) > 4 else len(tasks[counter:])
+    	tasks_subset = tasks[counter:counter+indx]
+    	template_values['tasks'] = tasks_subset
+    	tasks_html += template.render(template_values)
+    	counter += indx
     
     logging.info('gethtml done')
     return tasks_html	    
